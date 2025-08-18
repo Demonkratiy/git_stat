@@ -9,9 +9,9 @@ Choose the script that best fits your needs:
 ### 1. Quick Stats (`quick_git_stats.sh`) - Fast & Simple
 ```bash
 # From repository root
-./utils/quick_git_stats.sh <username>
-./utils/quick_git_stats.sh <username> --start-date 2024-01-01
-./utils/quick_git_stats.sh <username> --start-date 2024-01-01 --end-date 2024-12-31
+./quick_git_stats.sh <username>
+./quick_git_stats.sh <username> --start-date 2024-01-01
+./quick_git_stats.sh <username> --start-date 2024-01-01 --end-date 2024-12-31
 
 # From any subdirectory
 cd utils && ./quick_git_stats.sh <username>
@@ -21,7 +21,6 @@ cd utils && ./quick_git_stats.sh <username>
 ```bash
 # From repository root
 ./git_analytics.sh <username>
-./git_analytics.sh <username> --github-username <github_username>
 ./git_analytics.sh <username> --start-date 2024-01-01
 ./git_analytics.sh <username> --start-date 2024-01-01 --end-date 2024-12-31
 
@@ -33,7 +32,6 @@ cd utils && ./git_analytics.sh <username>
 ```bash
 # From repository root
 python3 git_analytics.py <username> --format json --output report.json
-python3 git_analytics.py <username> --github-username <github_username> --format json
 python3 git_analytics.py <username> --start-date 2024-01-01 --format json
 python3 git_analytics.py <username> --start-date 2024-01-01 --end-date 2024-12-31 --format json
 
@@ -57,36 +55,29 @@ A comprehensive script that analyzes Git repository statistics for a specific us
 ./git_analytics.sh <username>
 
 # Example
-./git_analytics.sh "John Doe"
-
-# With GitHub username for PR counting
-./git_analytics.sh "John Doe" --github-username johndoe
+./git_analytics.sh "username"
 
 # Run from different directory
-./git_analytics.sh "John Doe" /path/to/repo
+./git_analytics.sh "username" /path/to/repo
 ```
 
-### 🔧 GitHub Username Parameter
+### 🔧 Pull Request Detection
 
-The `--github-username` parameter allows you to specify a different GitHub username for merged pull request counting. This is useful when your Git commit author name differs from your GitHub username:
+The scripts now automatically detect pull requests by parsing merge commit messages, making them independent of external CLI tools or API access:
 
-- **Git commits** use your **display name** (e.g., "John Doe")
-- **GitHub merged pull requests** use your **GitHub username** (e.g., "johndoe")
+- **Automatic Detection** - Parses "Merge pull request #X" messages from `git log --merges`
+- **No External Dependencies** - Works without GitHub CLI or API access
+- **Accurate Counting** - Correctly identifies merged pull requests by the specified user
 
-**Example:**
-```bash
-# Commits will be counted using "John Doe"
-# Merged pull requests will be counted using "johndoe"
-./git_analytics.sh "John Doe" --github-username johndoe
-```
+**Note:** The scripts use the Git commit author name for both commits and pull request detection. Make sure to use the exact author name as it appears in your Git commits.
 
 ### 📋 Features
 
 #### 1. Merged Pull Request Analysis
-- **GitHub CLI Integration** - Uses `gh` command if available
-- **GitLab CLI Integration** - Uses `glab` command if available
-- **GitHub API Fallback** - Direct API calls for public repositories
-- **Manual Verification** - Prompts for manual check if automated methods fail
+- **Automatic Detection** - Parses merge commit messages to identify PR numbers
+- **Self-contained** - No external CLI tools or API access required
+- **Accurate Counting** - Correctly counts pull requests merged by the specified user
+- **Cross-platform** - Works on any Git repository with merge commits
 
 #### 2. Commit Statistics
 - **Total Commits** - All commits by user across all branches
@@ -98,9 +89,10 @@ The `--github-username` parameter allows you to specify a different GitHub usern
 #### 3. Lines of Code Analysis
 - **Files Modified** - Total number of files touched
 - **Current LOC** - Lines of code in files currently in repository
-- **Lines Added** - Total lines added by user
-- **Lines Deleted** - Total lines deleted by user
+- **Lines Added** - Total lines added by user (including merge commits)
+- **Lines Deleted** - Total lines deleted by user (including merge commits)
 - **Net Contribution** - Net lines added (additions - deletions)
+- **Merge Commit Support** - Accurately counts lines from merged pull requests
 
 #### 4. Detailed Statistics
 - **Activity Timeline** - First and last commit dates
@@ -118,11 +110,8 @@ The `--github-username` parameter allows you to specify a different GitHub usern
 - `sort` - Sorting utility
 - `uniq` - Unique line filtering
 
-#### Optional Dependencies
-- `gh` - GitHub CLI (for PR counting)
-- `glab` - GitLab CLI (for MR counting)
-- `jq` - JSON processor (for API responses)
-- `curl` - HTTP client (for API calls)
+#### No External Dependencies Required
+The scripts are now self-contained and don't require GitHub CLI, GitLab CLI, or API access for pull request detection.
 
 ### 📊 Sample Output
 
@@ -130,8 +119,8 @@ The `--github-username` parameter allows you to specify a different GitHub usern
 ================================
 Git Analytics Summary
 ================================
-User: john.doe
-Repository: git_stat
+User: username
+Repository: example-repo
 Generated: 2024-12-19 14:30:25
 
 Quick Stats:
@@ -141,8 +130,12 @@ Recent Activity (30 days): 12
 Activity Score: 1050
 
 Counting Pull Requests...
-Using GitHub CLI to count PRs...
-Pull Requests: 8
+Pull Requests (from merge commits): 4
+PR Details:
+  PR #42: a1b2c3d Merge pull request #42 from feature/user-authentication
+  PR #38: e4f5g6h Merge pull request #38 from feature/api-endpoints
+  PR #25: i7j8k9l Merge pull request #25 from feature/database-migration
+  PR #12: m0n1o2p Merge pull request #12 from feature/unit-tests
 
 Counting Commits...
 Total Commits: 45
@@ -173,7 +166,7 @@ Most Active Day of Week:
 ================================
 Analysis Complete
 ================================
-All statistics have been generated for user: john.doe
+All statistics have been generated for user: username
 ```
 
 ### 🎯 Use Cases
@@ -205,17 +198,17 @@ All statistics have been generated for user: john.doe
 ```bash
 # Run for multiple users
 for user in user1 user2 user3; do
-    ./utils/git_analytics.sh "$user" > "report_${user}.txt"
+    ./git_analytics.sh "$user" > "report_${user}.txt"
 done
 ```
 
 #### Export to File
 ```bash
 # Save output to file
-./utils/git_analytics.sh john.doe > analytics_report.txt
+./git_analytics.sh username > analytics_report.txt
 
 # Save with timestamp
-./utils/git_analytics.sh john.doe > "analytics_$(date +%Y%m%d_%H%M%S).txt"
+./git_analytics.sh username > "analytics_$(date +%Y%m%d_%H%M%S).txt"
 ```
 
 ### ⚠️ Limitations
@@ -244,10 +237,9 @@ git log --pretty=format:"%an" | sort -u | grep -i "username"
 
 **"Could not determine PR count"**
 ```bash
-# Install GitHub CLI
-# macOS: brew install gh
-# Ubuntu: sudo apt install gh
-# Then authenticate: gh auth login
+# This usually means no merge commits were found for the user
+# Check if the user has merged any pull requests
+git log --merges --author="username" --oneline
 ```
 
 #### Performance Tips
@@ -287,30 +279,24 @@ Advanced Git analytics with JSON output support and enhanced data processing.
 
 ```bash
 # Basic usage
-python3 git_analytics.py "John Doe"
-
-# With GitHub username for PR counting
-python3 git_analytics.py "John Doe" --github-username johndoe
+python3 git_analytics.py "username"
 
 # With date range
-python3 git_analytics.py "John Doe" --start-date 2024-01-01 --end-date 2024-12-31
+python3 git_analytics.py "username" --start-date 2024-01-01 --end-date 2024-12-31
 
 # JSON output
-python3 git_analytics.py "John Doe" --format json
-
-# JSON output with GitHub username
-python3 git_analytics.py "John Doe" --github-username johndoe --format json
+python3 git_analytics.py "username" --format json
 
 # Save to file
-python3 git_analytics.py "John Doe" --format json --output report.json
+python3 git_analytics.py "username" --format json --output report.json
 
 # Analyze different repository
-python3 git_analytics.py "John Doe" --repo /path/to/repo
+python3 git_analytics.py "username" --repo /path/to/repo
 ```
 
 ### Python Dependencies
-- `requests` - For API calls (optional)
 - Standard library modules: `os`, `sys`, `json`, `subprocess`, `datetime`, `collections`, `argparse`
+- No external dependencies required
 
 ## ⚡ Quick Stats Script (`quick_git_stats.sh`)
 
@@ -331,12 +317,12 @@ Lightweight script for fast statistics overview.
 
 # From any subdirectory (scripts auto-detect Git root)
 cd utils && ./quick_git_stats.sh <username>
-cd git_stat && ../utils/quick_git_stats.sh <username>
+cd example-repo && ../quick_git_stats.sh <username>
 ```
 
 ### Sample Output
 ```
-Quick Git Stats for: john.doe
+Quick Git Stats for: username
 ==================================
 Total Commits: 45
 Recent Commits (30 days): 12
@@ -359,16 +345,16 @@ All scripts support date range filtering to analyze contributions within specifi
 ### Examples
 ```bash
 # Analyze commits from January 1, 2024 onwards
-./utils/quick_git_stats.sh "username" --start-date 2024-01-01
+./quick_git_stats.sh "username" --start-date 2024-01-01
 
 # Analyze commits in 2024 only
-./utils/quick_git_stats.sh "username" --start-date 2024-01-01 --end-date 2024-12-31
+./quick_git_stats.sh "username" --start-date 2024-01-01 --end-date 2024-12-31
 
 # Analyze commits until December 31, 2023
-./utils/git_analytics.sh "username" --end-date 2023-12-31
+./git_analytics.sh "username" --end-date 2023-12-31
 
 # Python with date range and JSON output
-python3 utils/git_analytics.py "username" --start-date 2024-01-01 --end-date 2024-12-31 --format json
+python3 git_analytics.py "username" --start-date 2024-01-01 --end-date 2024-12-31 --format json
 ```
 
 ### Benefits

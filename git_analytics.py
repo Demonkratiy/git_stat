@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Git Analytics Script (Python Version)
-Advanced Git repository analytics for user contributions
+Improved Git Analytics Script (Python Version)
+Advanced Git repository analytics for user contributions with better PR detection and merge commit handling
 """
 
 import os
@@ -15,7 +15,7 @@ import requests
 from typing import Dict, List, Tuple, Optional
 
 
-class GitAnalytics:
+class ImprovedGitAnalytics:
     def __init__(self, repo_path: str = ".", start_date: str = None, end_date: str = None, github_username: str = None):
         self.repo_path = repo_path
         self.username = None
@@ -83,7 +83,9 @@ class GitAnalytics:
             'commits_by_branch': {},
             'commits_by_year': {},
             'commits_by_day': {},
-            'commits_by_month': {}
+            'commits_by_month': {},
+            'merge_commits': 0,
+            'regular_commits': 0
         }
         
         date_filter = self._build_date_filter()
@@ -98,88 +100,81 @@ class GitAnalytics:
         command = ['log', '--all', '--author', username, '--pretty=format:%H']
         command.extend(date_filter)
         output = self.run_git_command(command)
-        unique_hashes = set(output.split('\n')) if output else set()
-        stats['unique_commits'] = len(unique_hashes)
+        stats['unique_commits'] = len(set(output.split('\n'))) if output else 0
         
-        # Recent commits (30 days) - relative to filtered range
-        command = ['log', '--all', '--author', username, '--since=30 days ago', '--oneline']
-        command.extend(date_filter)
+        # Recent commits (last 30 days)
+        recent_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        command = ['log', '--all', '--author', username, '--since', recent_date, '--oneline']
         output = self.run_git_command(command)
         stats['recent_commits'] = len(output.split('\n')) if output else 0
         
         # First and last commit dates
-        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=short']
+        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=short', '--reverse']
         command.extend(date_filter)
         output = self.run_git_command(command)
         if output:
             dates = output.split('\n')
-            stats['first_commit'] = dates[-1] if dates else None
-            stats['last_commit'] = dates[0] if dates else None
+            stats['first_commit'] = dates[0] if dates else None
+            stats['last_commit'] = dates[-1] if dates else None
         
         # Commits by year
-        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=short']
+        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=format:%Y']
         command.extend(date_filter)
         output = self.run_git_command(command)
         if output:
-            years = [line.split('-')[0] for line in output.split('\n') if line and line != '0000']
+            years = [line for line in output.split('\n') if line.strip()]
             year_counts = Counter(years)
             stats['commits_by_year'] = dict(year_counts.most_common())
         
         # Commits by day of week
-        command = ['log', '--all', '--author', username, '--pretty=format:%aD']
+        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=format:%A']
         command.extend(date_filter)
         output = self.run_git_command(command)
         if output:
-            try:
-                days = []
-                for line in output.split('\n'):
-                    if line:
-                        try:
-                            date_obj = datetime.strptime(line, '%a, %d %b %Y %H:%M:%S %z')
-                            days.append(date_obj.strftime('%A'))
-                        except ValueError:
-                            continue
-                day_counts = Counter(days)
-                stats['commits_by_day'] = dict(day_counts.most_common())
-            except Exception as e:
-                print(f"Warning: Could not parse day statistics: {e}")
+            days = [line for line in output.split('\n') if line.strip()]
+            day_counts = Counter(days)
+            stats['commits_by_day'] = dict(day_counts.most_common())
         
         # Commits by month
-        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=short']
+        command = ['log', '--all', '--author', username, '--pretty=format:%ad', '--date=format:%Y-%m']
         command.extend(date_filter)
         output = self.run_git_command(command)
         if output:
-            months = []
-            for line in output.split('\n'):
-                if line and len(line.split('-')) >= 2:
-                    try:
-                        year, month = line.split('-')[:2]
-                        months.append(f"{year}-{month}")
-                    except (ValueError, IndexError):
-                        continue
+            months = [line for line in output.split('\n') if line.strip()]
             month_counts = Counter(months)
             stats['commits_by_month'] = dict(month_counts.most_common())
         
-        # Commits by branch
+        # Count merge commits vs regular commits
+        command = ['log', '--all', '--author', username, '--pretty=format:%H %P', '--merges']
+        command.extend(date_filter)
+        output = self.run_git_command(command)
+        stats['merge_commits'] = len(output.split('\n')) if output else 0
+        stats['regular_commits'] = stats['total_commits'] - stats['merge_commits']
+        
+        # Commits by branch (simplified approach)
         try:
-            branches_output = self.run_git_command(['branch', '-r'])
-            if branches_output:
-                for branch in branches_output.split('\n'):
-                    if branch.strip():
-                        branch_name = branch.strip().replace('origin/', '')
-                        command = ['log', '--author', username, branch.strip(), '--oneline']
-                        command.extend(date_filter)
-                        output = self.run_git_command(command)
-                        commit_count = len(output.split('\n')) if output else 0
-                        if commit_count > 0:
-                            stats['commits_by_branch'][branch_name] = commit_count
+            command = ['log', '--all', '--author', username, '--pretty=format:%D', '--decorate=short']
+            command.extend(date_filter)
+            output = self.run_git_command(command)
+            if output:
+                branch_counts = defaultdict(int)
+                for line in output.split('\n'):
+                    if 'HEAD' in line or 'origin/' in line:
+                        # Extract branch names
+                        parts = line.split(',')
+                        for part in parts:
+                            part = part.strip()
+                            if part.startswith('origin/'):
+                                branch_name = part.replace('origin/', '')
+                                branch_counts[branch_name] += 1
+                stats['commits_by_branch'] = dict(branch_counts)
         except Exception as e:
             print(f"Warning: Could not get branch statistics: {e}")
         
         return stats
     
-    def get_lines_of_code(self, username: str) -> Dict:
-        """Get lines of code statistics"""
+    def get_lines_of_code_improved(self, username: str) -> Dict:
+        """Get improved lines of code statistics including merge commits"""
         stats = {
             'files_modified': 0,
             'total_loc': 0,
@@ -187,7 +182,9 @@ class GitAnalytics:
             'lines_deleted': 0,
             'net_lines': 0,
             'files_by_extension': {},
-            'largest_files': []
+            'largest_files': [],
+            'merge_commit_stats': {},
+            'regular_commit_stats': {}
         }
         
         date_filter = self._build_date_filter()
@@ -222,25 +219,57 @@ class GitAnalytics:
         stats['files_by_extension'] = dict(ext_counts)
         stats['largest_files'] = sorted(file_sizes, key=lambda x: x[1], reverse=True)[:10]
         
-        # Count additions and deletions with date filter
-        command = ['log', '--all', '--author', username, '--pretty=tformat:', '--numstat']
+        # Improved: Get detailed statistics for each commit including merge commits
+        command = ['log', '--all', '--author', username, '--pretty=format:%H %P %s', '--numstat']
         command.extend(date_filter)
         output = self.run_git_command(command)
         
         total_additions = 0
         total_deletions = 0
+        current_commit = None
+        current_parents = None
+        current_subject = None
         
         for line in output.split('\n'):
             if line.strip():
-                parts = line.split('\t')
-                if len(parts) >= 2:
-                    try:
-                        additions = int(parts[0]) if parts[0] != '-' else 0
-                        deletions = int(parts[1]) if parts[1] != '-' else 0
-                        total_additions += additions
-                        total_deletions += deletions
-                    except ValueError:
-                        continue
+                # Check if this is a commit header line
+                if '\t' not in line and ' ' in line:
+                    parts = line.split(' ', 2)
+                    if len(parts) >= 3:
+                        current_commit = parts[0]
+                        current_parents = parts[1]
+                        current_subject = parts[2]
+                elif '\t' in line:
+                    # This is a file statistics line
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        try:
+                            additions = int(parts[0]) if parts[0] != '-' else 0
+                            deletions = int(parts[1]) if parts[1] != '-' else 0
+                            total_additions += additions
+                            total_deletions += deletions
+                            
+                            # Track merge commit statistics
+                            if current_parents and len(current_parents.split()) > 1:
+                                if current_commit not in stats['merge_commit_stats']:
+                                    stats['merge_commit_stats'][current_commit] = {
+                                        'subject': current_subject,
+                                        'additions': 0,
+                                        'deletions': 0
+                                    }
+                                stats['merge_commit_stats'][current_commit]['additions'] += additions
+                                stats['merge_commit_stats'][current_commit]['deletions'] += deletions
+                            else:
+                                if current_commit not in stats['regular_commit_stats']:
+                                    stats['regular_commit_stats'][current_commit] = {
+                                        'subject': current_subject,
+                                        'additions': 0,
+                                        'deletions': 0
+                                    }
+                                stats['regular_commit_stats'][current_commit]['additions'] += additions
+                                stats['regular_commit_stats'][current_commit]['deletions'] += deletions
+                        except ValueError:
+                            continue
         
         stats['lines_added'] = total_additions
         stats['lines_deleted'] = total_deletions
@@ -248,11 +277,13 @@ class GitAnalytics:
         
         return stats
     
-    def get_pull_requests(self, username: str) -> Dict:
-        """Get pull request statistics"""
+    def get_pull_requests_improved(self, username: str) -> Dict:
+        """Get improved pull request statistics including merge commit detection"""
         stats = {
             'pull_requests': 0,
-            'source': 'unknown'
+            'source': 'unknown',
+            'pr_details': [],
+            'merge_commits_with_prs': 0
         }
         
         # Use GitHub username if provided, otherwise use the regular username
@@ -260,71 +291,60 @@ class GitAnalytics:
         if self.github_username:
             print(f"Using GitHub username '{pr_username}' for PR counting...")
         
-        # Try GitHub CLI
-        try:
-            # Check if GitHub CLI is authenticated
-            auth_check = subprocess.run(
-                ['gh', 'auth', 'status'],
-                capture_output=True,
-                text=True
-            )
-            if auth_check.returncode == 0:
-                result = subprocess.run(
-                    ['gh', 'pr', 'list', '--author', pr_username, '--state', 'merged', '--json', 'number'],
+        # First, detect PRs from merge commits
+        date_filter = self._build_date_filter()
+        command = ['log', '--all', '--author', username, '--grep', 'Merge pull request', '--oneline']
+        command.extend(date_filter)
+        output = self.run_git_command(command)
+        
+        if output:
+            pr_commits = output.split('\n')
+            stats['merge_commits_with_prs'] = len(pr_commits)
+            
+            # Extract PR numbers from merge commit messages
+            for commit_line in pr_commits:
+                if 'Merge pull request' in commit_line:
+                    # Extract PR number
+                    try:
+                        pr_match = commit_line.split('Merge pull request #')[1].split()[0]
+                        pr_number = int(pr_match)
+                        stats['pr_details'].append({
+                            'pr_number': pr_number,
+                            'commit': commit_line.split()[0],
+                            'title': commit_line.split('Merge pull request #')[1].split(' from ')[0]
+                        })
+                    except (IndexError, ValueError):
+                        continue
+            
+            stats['pull_requests'] = len(stats['pr_details'])
+            stats['source'] = 'merge_commit_detection'
+        
+        # Try GitHub CLI as backup
+        if stats['pull_requests'] == 0:
+            try:
+                auth_check = subprocess.run(
+                    ['gh', 'auth', 'status'],
                     capture_output=True,
-                    text=True,
-                    check=True
+                    text=True
                 )
-                data = json.loads(result.stdout)
-                stats['pull_requests'] = len(data)
-                stats['source'] = 'github_cli'
-                return stats
-            else:
-                print("GitHub CLI not authenticated. Run 'gh auth login' to authenticate.")
-        except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
-            pass
-        
-        # Try GitLab CLI
-        try:
-            result = subprocess.run(
-                ['glab', 'mr', 'list', '--author', pr_username, '--state', 'merged', '--json', 'id'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            data = json.loads(result.stdout)
-            stats['pull_requests'] = len(data)
-            stats['source'] = 'gitlab_cli'
-            return stats
-        except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
-            pass
-        
-        # Try GitHub API with authentication
-        try:
-            remote_url = self.run_git_command(['config', '--get', 'remote.origin.url'])
-            if 'github.com' in remote_url:
-                # Extract repo name from URL
-                repo_name = remote_url.split('github.com/')[-1].replace('.git', '')
-                url = f"https://api.github.com/search/issues?q=author:{pr_username}+repo:{repo_name}+is:pr+is:merged"
-                
-                # Add authentication headers if token is available
-                headers = {}
-                github_token = os.environ.get('GITHUB_TOKEN')
-                if github_token:
-                    headers['Authorization'] = f'token {github_token}'
-                
-                response = requests.get(url, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    stats['pull_requests'] = data.get('total_count', 0)
-                    stats['source'] = 'github_api'
+                if auth_check.returncode == 0:
+                    result = subprocess.run(
+                        ['gh', 'pr', 'list', '--author', pr_username, '--state', 'merged', '--json', 'number,title'],
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
+                    data = json.loads(result.stdout)
+                    stats['pull_requests'] = len(data)
+                    stats['source'] = 'github_cli'
+                    for pr in data:
+                        stats['pr_details'].append({
+                            'pr_number': pr['number'],
+                            'title': pr['title']
+                        })
                     return stats
-                elif response.status_code == 401:
-                    print("GitHub API authentication failed. Set GITHUB_TOKEN environment variable.")
-                elif response.status_code == 403:
-                    print("GitHub API rate limit exceeded or insufficient permissions.")
-        except Exception as e:
-            print(f"GitHub API error: {e}")
+            except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
+                pass
         
         return stats
     
@@ -332,7 +352,9 @@ class GitAnalytics:
         """Calculate activity score based on commits and recent activity"""
         total_commits = stats.get('total_commits', 0)
         recent_commits = stats.get('recent_commits', 0)
-        return total_commits * 10 + recent_commits * 50
+        pull_requests = stats.get('pull_requests', 0)
+        # Bonus points for PRs
+        return total_commits * 10 + recent_commits * 50 + pull_requests * 100
     
     def generate_report(self, username: str, output_format: str = 'text') -> str:
         """Generate comprehensive analytics report"""
@@ -344,96 +366,111 @@ class GitAnalytics:
         
         # Gather all statistics
         commit_stats = self.get_commit_stats(username)
-        loc_stats = self.get_lines_of_code(username)
-        pr_stats = self.get_pull_requests(username)
+        loc_stats = self.get_lines_of_code_improved(username)
+        pr_stats = self.get_pull_requests_improved(username)
         
         # Calculate activity score
         activity_score = self.calculate_activity_score(commit_stats)
         
-        # Generate report
+        # Prepare report data
+        report_data = {
+            'user': username,
+            'repository': os.path.basename(os.path.abspath(self.repo_path)),
+            'generated': datetime.now().isoformat(),
+            'activity_score': activity_score,
+            'commit_stats': commit_stats,
+            'lines_of_code': loc_stats,
+            'pull_requests': pr_stats,
+            'date_filter': {
+                'start_date': self.start_date,
+                'end_date': self.end_date
+            }
+        }
+        
         if output_format == 'json':
-            return self._generate_json_report(
-                username, commit_stats, loc_stats, pr_stats, activity_score
-            )
+            return json.dumps(report_data, indent=2)
         else:
-            return self._generate_text_report(
-                username, commit_stats, loc_stats, pr_stats, activity_score
-            )
+            return self._format_text_report(report_data)
     
-    def _generate_text_report(self, username: str, commit_stats: Dict, 
-                            loc_stats: Dict, pr_stats: Dict, activity_score: int) -> str:
-        """Generate text report"""
+    def _format_text_report(self, data: Dict) -> str:
+        """Format the report as text"""
         report = []
         report.append("=" * 50)
-        report.append("Git Analytics Report")
+        report.append("Improved Git Analytics Report")
         report.append("=" * 50)
-        report.append(f"User: {username}")
-        report.append(f"Repository: {os.path.basename(os.path.abspath(self.repo_path))}")
-        report.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Show date filter if applied
-        if self.start_date or self.end_date:
-            date_range = []
-            if self.start_date:
-                date_range.append(f"from {self.start_date}")
-            if self.end_date:
-                date_range.append(f"until {self.end_date}")
-            report.append(f"Date Range: {' '.join(date_range)}")
-        
+        report.append(f"User: {data['user']}")
+        report.append(f"Repository: {data['repository']}")
+        report.append(f"Generated: {data['generated'][:19].replace('T', ' ')}")
+        if data['date_filter']['start_date'] or data['date_filter']['end_date']:
+            report.append(f"Date Range: from {data['date_filter']['start_date'] or 'beginning'} until {data['date_filter']['end_date'] or 'now'}")
         report.append("")
         
-        # Quick stats
+        # Quick Stats
         report.append("📊 Quick Stats:")
-        report.append(f"  Total Commits: {commit_stats['total_commits']}")
-        report.append(f"  Unique Commits: {commit_stats['unique_commits']}")
-        report.append(f"  Recent Activity (30 days): {commit_stats['recent_commits']}")
-        report.append(f"  Activity Score: {activity_score}")
+        report.append(f"  Total Commits: {data['commit_stats']['total_commits']}")
+        report.append(f"  Unique Commits: {data['commit_stats']['unique_commits']}")
+        report.append(f"  Recent Activity (30 days): {data['commit_stats']['recent_commits']}")
+        report.append(f"  Activity Score: {data['activity_score']}")
         report.append("")
         
         # Pull Requests
-        report.append("🔀 Merged Pull Requests:")
-        report.append(f"  Count: {pr_stats['pull_requests']}")
-        report.append(f"  Source: {pr_stats['source']}")
+        report.append("🔀 Pull Requests:")
+        report.append(f"  Count: {data['pull_requests']['pull_requests']}")
+        report.append(f"  Source: {data['pull_requests']['source']}")
+        if data['pull_requests']['pr_details']:
+            report.append("  Details:")
+            for pr in data['pull_requests']['pr_details']:
+                report.append(f"    PR #{pr['pr_number']}: {pr.get('title', 'N/A')}")
         report.append("")
         
         # Lines of Code
         report.append("📝 Lines of Code:")
-        report.append(f"  Files Modified: {loc_stats['files_modified']}")
-        report.append(f"  Total LOC: {loc_stats['total_loc']}")
-        report.append(f"  Lines Added: {loc_stats['lines_added']}")
-        report.append(f"  Lines Deleted: {loc_stats['lines_deleted']}")
-        report.append(f"  Net Lines: {loc_stats['net_lines']}")
+        report.append(f"  Files Modified: {data['lines_of_code']['files_modified']}")
+        report.append(f"  Total LOC: {data['lines_of_code']['total_loc']}")
+        report.append(f"  Lines Added: {data['lines_of_code']['lines_added']}")
+        report.append(f"  Lines Deleted: {data['lines_of_code']['lines_deleted']}")
+        report.append(f"  Net Lines: {data['lines_of_code']['net_lines']}")
         report.append("")
         
-        # Top file extensions
-        if loc_stats['files_by_extension']:
+        # File Extensions
+        if data['lines_of_code']['files_by_extension']:
             report.append("📁 Top File Extensions:")
-            sorted_exts = sorted(loc_stats['files_by_extension'].items(), 
-                               key=lambda x: x[1], reverse=True)[:5]
-            for ext, count in sorted_exts:
+            for ext, count in sorted(data['lines_of_code']['files_by_extension'].items(), key=lambda x: x[1], reverse=True)[:5]:
                 report.append(f"  {ext}: {count} lines")
             report.append("")
         
-        # Commit timeline
-        if commit_stats['first_commit'] and commit_stats['last_commit']:
+        # Timeline
+        if data['commit_stats']['first_commit'] or data['commit_stats']['last_commit']:
             report.append("📅 Timeline:")
-            report.append(f"  First Commit: {commit_stats['first_commit']}")
-            report.append(f"  Last Commit: {commit_stats['last_commit']}")
+            if data['commit_stats']['first_commit']:
+                report.append(f"  First Commit: {data['commit_stats']['first_commit']}")
+            if data['commit_stats']['last_commit']:
+                report.append(f"  Last Commit: {data['commit_stats']['last_commit']}")
             report.append("")
         
-        # Commits by year
-        if commit_stats['commits_by_year']:
+        # Commits by Year
+        if data['commit_stats']['commits_by_year']:
             report.append("📈 Commits by Year:")
-            for year, count in sorted(commit_stats['commits_by_year'].items()):
+            for year, count in sorted(data['commit_stats']['commits_by_year'].items()):
                 report.append(f"  {year}: {count} commits")
             report.append("")
         
-        # Most active day
-        if commit_stats['commits_by_day']:
-            most_active_day = max(commit_stats['commits_by_day'].items(), 
-                                key=lambda x: x[1])
+        # Most Active Day
+        if data['commit_stats']['commits_by_day']:
+            most_active_day = max(data['commit_stats']['commits_by_day'].items(), key=lambda x: x[1])
             report.append("🗓️  Most Active Day:")
             report.append(f"  {most_active_day[0]}: {most_active_day[1]} commits")
+            report.append("")
+        
+        # Merge Commit Analysis
+        if data['commit_stats']['merge_commits'] > 0:
+            report.append("🔀 Merge Commit Analysis:")
+            report.append(f"  Merge Commits: {data['commit_stats']['merge_commits']}")
+            report.append(f"  Regular Commits: {data['commit_stats']['regular_commits']}")
+            if data['lines_of_code']['merge_commit_stats']:
+                report.append("  Merge Commit Contributions:")
+                for commit, stats in data['lines_of_code']['merge_commit_stats'].items():
+                    report.append(f"    {commit[:8]}: +{stats['additions']} -{stats['deletions']} ({stats['subject'][:50]}...)")
             report.append("")
         
         report.append("=" * 50)
@@ -441,50 +478,33 @@ class GitAnalytics:
         report.append("=" * 50)
         
         return "\n".join(report)
-    
-    def _generate_json_report(self, username: str, commit_stats: Dict, 
-                            loc_stats: Dict, pr_stats: Dict, activity_score: int) -> str:
-        """Generate JSON report"""
-        report = {
-            'user': username,
-            'repository': os.path.basename(os.path.abspath(self.repo_path)),
-            'generated': datetime.now().isoformat(),
-            'activity_score': activity_score,
-            'commit_stats': commit_stats,
-            'lines_of_code': loc_stats,
-            'pull_requests': pr_stats
-        }
-        
-        # Add date filter information if applied
-        if self.start_date or self.end_date:
-            report['date_filter'] = {
-                'start_date': self.start_date,
-                'end_date': self.end_date
-            }
-        
-        return json.dumps(report, indent=2)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Git Analytics Tool')
+    parser = argparse.ArgumentParser(description='Improved Git Analytics for user contributions')
     parser.add_argument('username', help='Git username to analyze')
-    parser.add_argument('--github-username', help='GitHub username for merged PR counting (different from Git author name)')
     parser.add_argument('--repo', default='.', help='Repository path (default: current directory)')
-    parser.add_argument('--start-date', help='Start date filter (YYYY-MM-DD format)')
-    parser.add_argument('--end-date', help='End date filter (YYYY-MM-DD format)')
-    parser.add_argument('--format', choices=['text', 'json'], default='text', 
-                       help='Output format (default: text)')
-    parser.add_argument('--output', help='Output file (default: stdout)')
+    parser.add_argument('--start-date', help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
+    parser.add_argument('--github-username', help='GitHub username for PR detection')
+    parser.add_argument('--format', choices=['text', 'json'], default='text', help='Output format')
+    parser.add_argument('--output', help='Output file path')
     
     args = parser.parse_args()
     
-    analytics = GitAnalytics(args.repo, args.start_date, args.end_date, args.github_username)
+    analytics = ImprovedGitAnalytics(
+        repo_path=args.repo,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        github_username=args.github_username
+    )
+    
     report = analytics.generate_report(args.username, args.format)
     
     if args.output:
         with open(args.output, 'w') as f:
             f.write(report)
-        print(f"Report saved to: {args.output}")
+        print(f"Report saved to {args.output}")
     else:
         print(report)
 
