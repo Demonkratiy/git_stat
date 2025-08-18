@@ -57,13 +57,13 @@ date_filter=""
 if [ -n "$start_date" ] || [ -n "$end_date" ]; then
     if [ -n "$start_date" ] && [ -n "$end_date" ]; then
         date_filter="--since=\"$start_date\" --until=\"$end_date\""
-        echo -e "${YELLOW}Filtering commits from $start_date to $end_date${NC}"
+        filter_msg="Filtering commits from $start_date to $end_date"
     elif [ -n "$start_date" ]; then
         date_filter="--since=\"$start_date\""
-        echo -e "${YELLOW}Filtering commits from $(date +%Y)-04-01 onwards${NC}" >&2
+        filter_msg="Filtering commits from $(date +%Y)-04-01 onwards"
     elif [ -n "$end_date" ]; then
         date_filter="--until=\"$end_date\""
-        echo -e "${YELLOW}Filtering commits until $end_date${NC}"
+        filter_msg="Filtering commits until $end_date"
     fi
 fi
 
@@ -94,15 +94,32 @@ if [ "$(pwd)" != "$git_root" ]; then
 fi
 
 # Список исключённых авторов: любые боты ([bot], -bot$) и явно pbicvloc, pbicvloc2
-EXCLUDED_AUTHORS='(\[bot\]|-bot$|^pbicvloc$|^pbicvloc2$)'
+EXCLUDED_AUTHORS='(\[bot\]|-bot$|^pbicvloc$|^pbicvloc2$|^CSIGS-|^CSIGS@)'
 
 # Получить список всех авторов, исключая из EXCLUDED_AUTHORS
-authors=$(git log --all $date_filter --format='%aN' | sort | uniq | grep -v -E "$EXCLUDED_AUTHORS")
+
+# Вывести информационное сообщение до таблицы
+if [ -n "$filter_msg" ]; then
+    echo -e "${YELLOW}$filter_msg${NC}"
+fi
+
+# '|| true' нужен, чтобы избежать завершения скрипта с ошибкой при отсутствии авторов,
+# так как grep возвращает exit 1, если не найдено совпадений, а set -e прерывает выполнение.
+authors=$(git log --all $date_filter --format='%aN' | sort | uniq | grep -v -E "$EXCLUDED_AUTHORS" || true)
+
+# Если нет авторов, завершить скрипт успешно
+
+# Если нет авторов, завершить скрипт успешно и не выводить ничего в stdout (CSV не будет создан)
+if [ -z "$authors" ]; then
+    # ...ничего не выводим...
+    exit 0
+fi
 
 # Вывести заголовок таблицы
-echo "Author,Total Commits,Recent Commits (30 days),Files Modified,Lines Added,Lines Deleted,Net Lines"
-
+echo "Author,Email,Total Commits,Recent Commits (30 days),Files Modified,Lines Added,Lines Deleted,Net Lines"
 for username in $authors; do
+    # Получить email автора
+    author_email=$(git log --all $date_filter --author="$username" --format='%aE' | grep -v -E "$EXCLUDED_AUTHORS" | sort | uniq | head -n1)
     # Quick stats with date filter
     total_commits=$(eval "git log --all --author=\"$username\" $date_filter --oneline" | wc -l)
     recent_commits=$(eval "git log --all --author=\"$username\" $date_filter --since=\"30 days ago\" --oneline" | wc -l)
@@ -124,5 +141,6 @@ for username in $authors; do
     net_lines=$((total_additions - total_deletions))
 
     # Выводим строку таблицы
-    echo "$username,$total_commits,$recent_commits,$files_modified,$total_additions,$total_deletions,$net_lines"
+    echo "$username,$author_email,$total_commits,$recent_commits,$files_modified,$total_additions,$total_deletions,$net_lines"
 done
+exit 0
