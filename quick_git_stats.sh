@@ -2,7 +2,7 @@
 
 # Quick Git Stats Script
 # Simple version for quick statistics
-# Usage: ./quick_git_stats.sh [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD]
+# Usage: ./quick_git_stats.sh <username> [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD]
 
 set -e
 
@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Default values
-start_date="$(date +%Y)-04-01"
+start_date=""
 end_date=""
 username=""
 
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            echo "Usage: $0 [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD]"
+            echo "Usage: $0 <username> [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD]"
             echo ""
             echo "Options:"
             echo "  --start-date YYYY-MM-DD  Filter commits from this date (inclusive)"
@@ -37,37 +37,51 @@ while [[ $# -gt 0 ]]; do
             echo "  --help, -h               Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0"
-            echo "  $0 --start-date 2024-01-01"
-            echo "  $0 --start-date 2024-01-01 --end-date 2024-12-31"
+            echo "  $0 john.doe"
+            echo "  $0 john.doe --start-date 2024-01-01"
+            echo "  $0 john.doe --start-date 2024-01-01 --end-date 2024-12-31"
             exit 0
             ;;
-        -*|*)
+        -*)
             echo "Unknown option: $1"
             echo "Use --help for usage information"
             exit 1
             ;;
+        *)
+            if [ -z "$username" ]; then
+                username="$1"
+            else
+                echo "Multiple usernames specified. Use --help for usage information"
+                exit 1
+            fi
+            shift
+            ;;
     esac
 done
 
-
+if [ -z "$username" ]; then
+    echo "Usage: $0 <username> [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD]"
+    echo "Use --help for more information"
+    exit 1
+fi
 
 # Build date filter
 date_filter=""
 if [ -n "$start_date" ] || [ -n "$end_date" ]; then
     if [ -n "$start_date" ] && [ -n "$end_date" ]; then
         date_filter="--since=\"$start_date\" --until=\"$end_date\""
-        filter_msg="Filtering commits from $start_date to $end_date"
+        echo -e "${YELLOW}Filtering commits from $start_date to $end_date${NC}"
     elif [ -n "$start_date" ]; then
         date_filter="--since=\"$start_date\""
-        filter_msg="Filtering commits from $(date +%Y)-04-01 onwards"
+        echo -e "${YELLOW}Filtering commits from $start_date onwards${NC}"
     elif [ -n "$end_date" ]; then
         date_filter="--until=\"$end_date\""
-        filter_msg="Filtering commits until $end_date"
+        echo -e "${YELLOW}Filtering commits until $end_date${NC}"
     fi
 fi
 
-
+echo -e "${BLUE}Quick Git Stats for: $username${NC}"
+echo "=================================="
 
 # Try to find git repository from current directory or parent directories
 current_dir=$(pwd)
@@ -93,54 +107,40 @@ if [ "$(pwd)" != "$git_root" ]; then
     cd "$git_root"
 fi
 
-# Список исключённых авторов: любые боты ([bot], -bot$) и явно pbicvloc, pbicvloc2
-EXCLUDED_AUTHORS='(\[bot\]|-bot$|^pbicvloc$|^pbicvloc2$|^CSIGS-|^CSIGS@)'
-
-# Получить список всех авторов, исключая из EXCLUDED_AUTHORS
-
-# Вывести информационное сообщение до таблицы
-if [ -n "$filter_msg" ]; then
-    echo -e "${YELLOW}$filter_msg${NC}"
+# Check if user exists with date filter
+if ! eval "git log --author=\"$username\" $date_filter --oneline -1" > /dev/null 2>&1; then
+    echo "No commits found for user '$username'"
+    if [ -n "$date_filter" ]; then
+        echo "in the specified date range"
+    fi
+    exit 1
 fi
 
-# '|| true' нужен, чтобы избежать завершения скрипта с ошибкой при отсутствии авторов,
-# так как grep возвращает exit 1, если не найдено совпадений, а set -e прерывает выполнение.
-authors=$(git log --all $date_filter --format='%aN' | sort | uniq | grep -v -E "$EXCLUDED_AUTHORS" || true)
+# Quick stats with date filter
+total_commits=$(eval "git log --all --author=\"$username\" $date_filter --oneline" | wc -l)
+recent_commits=$(eval "git log --all --author=\"$username\" $date_filter --since=\"30 days ago\" --oneline" | wc -l)
+files_modified=$(eval "git log --all --author=\"$username\" $date_filter --name-only --pretty=format:" | sort -u | wc -l)
 
-# Если нет авторов, завершить скрипт успешно
+echo -e "${GREEN}Total Commits: $total_commits${NC}"
+echo -e "${GREEN}Recent Commits (30 days): $recent_commits${NC}"
+echo -e "${GREEN}Files Modified: $files_modified${NC}"
 
-# Если нет авторов, завершить скрипт успешно и не выводить ничего в stdout (CSV не будет создан)
-if [ -z "$authors" ]; then
-    # ...ничего не выводим...
-    exit 0
-fi
+# Lines of code (simplified) with date filter
+total_additions=0
+total_deletions=0
 
-# Вывести заголовок таблицы
-echo "Author,Email,Total Commits,Recent Commits (30 days),Files Modified,Lines Added,Lines Deleted,Net Lines"
-for username in $authors; do
-    # Получить email автора
-    author_email=$(git log --all $date_filter --author="$username" --format='%aE' | grep -v -E "$EXCLUDED_AUTHORS" | sort | uniq | head -n1)
-    # Quick stats with date filter
-    total_commits=$(eval "git log --all --author=\"$username\" $date_filter --oneline" | wc -l)
-    recent_commits=$(eval "git log --all --author=\"$username\" $date_filter --since=\"30 days ago\" --oneline" | wc -l)
-    files_modified=$(eval "git log --all --author=\"$username\" $date_filter --name-only --pretty=format:" | sort -u | wc -l)
+# Use a different approach to avoid subshell issues
+while read additions deletions file; do
+    if [ -n "$additions" ] && [ "$additions" != "-" ]; then
+        total_additions=$((total_additions + additions))
+    fi
+    if [ -n "$deletions" ] && [ "$deletions" != "-" ]; then
+        total_deletions=$((total_deletions + deletions))
+    fi
+done < <(eval "git log --all --author=\"$username\" $date_filter --pretty=tformat: --numstat")
 
-    # Lines of code (simplified) with date filter
-    total_additions=0
-    total_deletions=0
+echo -e "${GREEN}Lines Added: $total_additions${NC}"
+echo -e "${GREEN}Lines Deleted: $total_deletions${NC}"
+echo -e "${GREEN}Net Lines: $((total_additions - total_deletions))${NC}"
 
-    while read additions deletions file; do
-        if [ -n "$additions" ] && [ "$additions" != "-" ]; then
-            total_additions=$((total_additions + additions))
-        fi
-        if [ -n "$deletions" ] && [ "$deletions" != "-" ]; then
-            total_deletions=$((total_deletions + deletions))
-        fi
-    done < <(eval "git log --all --author=\"$username\" $date_filter --pretty=tformat: --numstat")
-
-    net_lines=$((total_additions - total_deletions))
-
-    # Выводим строку таблицы
-    echo "$username,$author_email,$total_commits,$recent_commits,$files_modified,$total_additions,$total_deletions,$net_lines"
-done
-exit 0
+echo "==================================" 

@@ -7,7 +7,7 @@ set -euo pipefail
 PROJECTS_DIR="${PROJECTS_DIR:-D:/Projects/Visuals/MS_visuals}"   # каталог с репозиториями
 OUTPUT_DIR=""
 DIR_NAME=""
-SCRIPT_PATH="${SCRIPT_PATH:-D:/Projects/GitStats/quick_git_stats.sh}"  # путь к вашему скрипту статистики
+SCRIPT_PATH="${SCRIPT_PATH:-D:/Projects/GitStats/quick_stats_table_view.sh}"  # путь к вашему скрипту статистики
 
 START_DATE="${START_DATE:-}"        # пример: 2024-01-01
 END_DATE="${END_DATE:-}"            # пример: 2024-12-31
@@ -25,7 +25,7 @@ Usage: $(basename "$0") [options]
 Options:
   --projects-dir DIR      Каталог с репозиториями (по умолчанию: $PROJECTS_DIR)
   --output-dir DIR        Каталог для CSV и логов (по умолчанию: $OUTPUT_DIR)
-  --script-path FILE      Путь к quick_git_stats.sh (по умолчанию: $SCRIPT_PATH)
+  --script-path FILE      Путь к quick_stats_table_view.sh (по умолчанию: $SCRIPT_PATH)
   --start-date YYYY-MM-DD Начало периода (включительно)
   --end-date   YYYY-MM-DD Конец периода (включительно)
   --pull-mode  MODE       ff-only | skip (по умолчанию: $PULL_MODE)
@@ -38,7 +38,7 @@ Options:
   $(basename "$0") \\
     --projects-dir "D:/work/projects" \\
     --output-dir   "D:/work/out" \\
-    --script-path  "./quick_git_stats.sh" \\
+    --script-path  "./quick_stats_table_view.sh" \\
     --start-date   2024-04-01 --end-date 2024-12-31 \\
     --jobs 4 --xlsx "D:/work/out/final_report.xlsx"
 EOF
@@ -95,7 +95,7 @@ if [[ ! -f "$SCRIPT_PATH" ]]; then
   exit 1
 fi
 
-# Собираем аргументы дат для вашего quick_git_stats.sh
+# Собираем аргументы дат для вашего quick_stats_table_view.sh
 DATE_ARGS=()
 [[ -n "${START_DATE}" ]] && DATE_ARGS+=(--start-date "${START_DATE}")
 [[ -n "${END_DATE}"   ]] && DATE_ARGS+=(--end-date   "${END_DATE}")
@@ -202,6 +202,8 @@ if [[ "${#CANDIDATE_DIRS[@]}" -eq 0 ]]; then
   echo "Не найдено подпапок в $PROJECTS_DIR"; exit 0
 fi
 
+# Логируем период запроса
+echo "📅 Период статистики: START_DATE='${START_DATE}', END_DATE='${END_DATE}'" | tee -a "$SUMMARY_LOG"
 echo "🔄 Используется потоков: $JOBS"
 echo "📁 Найдено папок-кандидатов: ${#CANDIDATE_DIRS[@]}" | tee -a "$SUMMARY_LOG"
 
@@ -210,7 +212,18 @@ echo "📁 Найдено папок-кандидатов: ${#CANDIDATE_DIRS[@]}
 # ==============================
 if [[ "$JOBS" -gt 1 ]]; then
   # Попробуем через xargs -P (обычно есть и в Git Bash)
-  printf '%s\0' "${CANDIDATE_DIRS[@]}" | xargs -0 -n1 -P "$JOBS" bash -c 'process_repo "$0"' || true
+  # Передаем все переменные явно, чтобы process_repo получал их
+  export DATE_ARGS
+  for dir in "${CANDIDATE_DIRS[@]}"; do
+    (
+      process_repo "$dir"
+    ) &
+    # Ограничиваем количество параллельных заданий
+    if [[ $(jobs -r -p | wc -l) -ge "$JOBS" ]]; then
+      wait -n
+    fi
+  done
+  wait
 else
   for dir in "${CANDIDATE_DIRS[@]}"; do
     process_repo "$dir"
@@ -266,7 +279,7 @@ try:
             summary_grouped = summary.groupby('Author', as_index=False).sum(numeric_only=True)
           summary_grouped.to_excel(writer, sheet_name='Summary', index=False)
         else:
-          print("  Итоговый summary пустой или нет столбца 'Author'.")
+          print("❌  Итоговый summary пустой или нет столбца 'Author'.")
         # Затем остальные листы
         for name, df in repo_dfs:
           if not df.empty:
@@ -278,7 +291,7 @@ try:
       print("\033[1;31mВозможно, файл открыт в Excel. Пожалуйста, закройте его и повторите попытку.\033[0m")
       sys.exit(1)
 except Exception as e:
-    print(f"Ошибка при формировании Excel: {e}")
+    print(f"❌ Ошибка при формировании Excel: {e}")
 PY
   if [[ $? -ne 0 ]]; then
     echo "⚠ Не удалось создать Excel. Убедитесь, что установлены python, pandas и openpyxl." | tee -a "$ERRORS_LOG"
@@ -299,5 +312,5 @@ empty_report_count=$(grep -c '^⚠  Пустой отчет:' "$SUMMARY_LOG")
 if [[ -z "$empty_report_count" ]]; then empty_report_count=0; fi
 valid_repo_count=$(( ${#CANDIDATE_DIRS[@]} - empty_report_count ))
 if [[ -z "$valid_repo_count" ]]; then valid_repo_count=0; fi
-echo "Валидных репозиториев: $valid_repo_count"
+echo "Валидных репозиториев с историей: $valid_repo_count"
 echo "Пустых отчетов: $empty_report_count"
