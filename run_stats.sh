@@ -5,11 +5,12 @@
 # Загружаем переменные из .env, если он существует
 if [ -f .env ]; then
   source .env
+  export VISUALS_DIR CV_UTILS_DIR INFRASTRUCTURE_DIR API_TESTING_DIR GITSTATS_OUT SCRIPT_PATH PYTHON_CMD
 fi
 
 # Переменные для дат
-START_DATE="2025-04-01"
-END_DATE="2025-06-30"
+START_DATE="2025-07-01"
+END_DATE="2025-10-01"
 
 # Теперь переменные для путей и дат берутся из .env:
 # VISUALS_DIR, CV_UTILS_DIR, INFRASTRUCTURE_DIR, API_TESTING_DIR, GITSTATS_OUT, START_DATE, END_DATE
@@ -68,7 +69,7 @@ case "$1" in
     "$0" api_testing
   echo "--- Все сценарии завершены ---"
   echo "Собираем общий итоговый Excel..."
-  python collect_all_summaries.py
+  ${PYTHON_CMD:-python} collect_all_summaries.py
   echo "Готово: out/final_report_ALL.xlsx"
     ;;
   *)

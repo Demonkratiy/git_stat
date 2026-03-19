@@ -234,7 +234,7 @@ fi
 # Итог: собрать XLSX (необязательно)
 # ==============================
 if [[ -n "$XLSX_PATH" ]]; then
-  OUTPUT_DIR="$OUTPUT_DIR" XLSX_PATH="$XLSX_PATH" python - <<'PY'
+  OUTPUT_DIR="$OUTPUT_DIR" XLSX_PATH="$XLSX_PATH" ${PYTHON_CMD:-python} - <<'PY'
 import os, sys, pandas as pd
 input_dir = os.environ.get("OUTPUT_DIR", ".")
 xlsx_path  = os.environ.get("XLSX_PATH")
@@ -272,11 +272,20 @@ try:
       with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         # Сначала Summary
         if not summary.empty and 'Author' in summary.columns:
-          # Если есть столбец Email, группируем по Author и Email
-          if 'Email' in summary.columns:
-            summary_grouped = summary.groupby(['Author', 'Email'], as_index=False).sum(numeric_only=True)
-          else:
-            summary_grouped = summary.groupby('Author', as_index=False).sum(numeric_only=True)
+          def aggregate_by_email(df):
+            if 'Email' not in df.columns or df['Email'].isna().all():
+              return df.groupby('Author', as_index=False).sum(numeric_only=True)
+            author_by_email = (
+              df.groupby('Email')['Author']
+              .agg(lambda x: x.value_counts().index[0])
+              .reset_index()
+            )
+            numeric_cols = df.select_dtypes(include='number').columns.tolist()
+            agg = df.groupby('Email', as_index=False)[numeric_cols].sum()
+            result = author_by_email.merge(agg, on='Email')
+            cols = ['Author', 'Email'] + [c for c in result.columns if c not in ('Author', 'Email')]
+            return result[cols]
+          summary_grouped = aggregate_by_email(summary)
           summary_grouped.to_excel(writer, sheet_name='Summary', index=False)
         else:
           print("❌  Итоговый summary пустой или нет столбца 'Author'.")

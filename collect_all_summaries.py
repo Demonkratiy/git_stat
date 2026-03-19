@@ -31,15 +31,27 @@ for folder in os.listdir(OUT_DIR):
                 print(f"Ошибка чтения {file_path}: {e}")
 
 
+def aggregate_by_email(df):
+    """Группирует по Email, суммирует числа, берёт наиболее частое имя автора."""
+    if 'Email' not in df.columns or df['Email'].isna().all():
+        return df.groupby('Author', as_index=False).sum(numeric_only=True)
+    author_by_email = (
+        df.groupby('Email')['Author']
+        .agg(lambda x: x.value_counts().index[0])
+        .reset_index()
+    )
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    agg = df.groupby('Email', as_index=False)[numeric_cols].sum()
+    result = author_by_email.merge(agg, on='Email')
+    cols = ['Author', 'Email'] + [c for c in result.columns if c not in ('Author', 'Email')]
+    return result[cols]
+
 try:
     with pd.ExcelWriter(RESULT_XLSX, engine='openpyxl') as writer:
         # Сначала общий Summary
         if summary_dfs:
             all_df = pd.concat([df for _, df in summary_dfs], ignore_index=True)
-            if 'Email' in all_df.columns:
-                summary_grouped = all_df.groupby(['Author', 'Email'], as_index=False).sum(numeric_only=True)
-            else:
-                summary_grouped = all_df.groupby('Author', as_index=False).sum(numeric_only=True)
+            summary_grouped = aggregate_by_email(all_df)
             summary_grouped.to_excel(writer, sheet_name='Summary', index=False)
         else:
             pd.DataFrame({'Нет данных': []}).to_excel(writer, sheet_name='Summary', index=False)

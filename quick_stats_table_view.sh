@@ -48,19 +48,17 @@ done
 
 
 
-# Build date filter
-date_filter=""
-if [ -n "$start_date" ] || [ -n "$end_date" ]; then
-    if [ -n "$start_date" ] && [ -n "$end_date" ]; then
-        date_filter="--since=\"$start_date\" --until=\"$end_date\""
-        filter_msg="Filtering commits from $start_date to $end_date"
-    elif [ -n "$start_date" ]; then
-        date_filter="--since=\"$start_date\""
+# Build date filter as array (избегаем eval и проблем с кавычками внутри строки)
+date_filter=()
+if [ -n "$start_date" ] && [ -n "$end_date" ]; then
+    date_filter=(--since="$start_date" --until="$end_date")
+    filter_msg="Filtering commits from $start_date to $end_date"
+elif [ -n "$start_date" ]; then
+    date_filter=(--since="$start_date")
     filter_msg="Filtering commits from $start_date onwards"
-    elif [ -n "$end_date" ]; then
-        date_filter="--until=\"$end_date\""
-        filter_msg="Filtering commits until $end_date"
-    fi
+elif [ -n "$end_date" ]; then
+    date_filter=(--until="$end_date")
+    filter_msg="Filtering commits until $end_date"
 fi
 
 
@@ -79,64 +77,76 @@ while [ "$current_dir" != "/" ]; do
 done
 
 if [ -z "$git_root" ]; then
-    echo "Not a Git repository. Please run this script from within a Git repository."
+    echo "Not a Git repository. Please run this script from within a Git repository." >&2
     exit 1
 fi
 
 # Navigate to git repository root if not already there
 if [ "$(pwd)" != "$git_root" ]; then
-    echo -e "Navigating to Git repository root: $git_root"
+    echo "Navigating to Git repository root: $git_root" >&2
     cd "$git_root"
 fi
 
-# Список исключённых авторов: любые боты ([bot], -bot$) и явно pbicvloc, pbicvloc2
-EXCLUDED_AUTHORS='(\[bot\]|-bot$|^pbicvloc$|^pbicvloc2$|^CSIGS-|^CSIGS@)'
+# Список исключённых авторов (по имени)
+EXCLUDED_AUTHORS='(\[bot\]|-bot$|^pbicvloc$|^pbicvloc2$|^CSIGS-|^CSIGS@|^MerlinBot$)'
 
-# Получить список всех авторов, исключая из EXCLUDED_AUTHORS
+# Список исключённых email-адресов
+EXCLUDED_EMAILS='(adodependabot@microsoft\.com|alexyar@microsoft\.com|roihochler@microsoft\.com|sdabbah@microsoft\.com)'
 
-# Вывести информационное сообщение до таблицы
+# Вывести информационное сообщение в stderr (не в CSV)
 if [ -n "$filter_msg" ]; then
-    echo -e "$filter_msg"
+    echo "$filter_msg" >&2
 fi
 
-# '|| true' нужен, чтобы избежать завершения скрипта с ошибкой при отсутствии авторов,
-# так как grep возвращает exit 1, если не найдено совпадений, а set -e прерывает выполнение.
-authors=$(git log --all $date_filter --format='%aN' | sort | uniq | grep -v -E "$EXCLUDED_AUTHORS" || true)
+# Кешируем полный лог один раз — экономит время на больших репозиториях
+full_log=$(git log --all "${date_filter[@]}" --format='%H|%aN|%aE')
+recent_log=$(git log --all "${date_filter[@]}" --since="30 days ago" --format='%H|%aN')
 
-# Если нет авторов, завершить скрипт успешно
+# Собираем список авторов: фильтруем по полю имени (field 1) и email (field 2) через awk
+# Паттерны вписаны в awk напрямую — избегаем проблем с escape-символами при передаче через -v
+authors_list=$(echo "$full_log" | awk -F'|' '{print $2 "|" $3}' | sort -u | \
+    awk -F'|' '
+        $1 ~ /\[bot\]|-bot$|^pbicvloc$|^pbicvloc2$|^CSIGS-|^CSIGS@|^MerlinBot$/ { next }
+        $2 ~ /adodependabot@microsoft\.com|alexyar@microsoft\.com|roihochler@microsoft\.com|sdabbah@microsoft\.com/ { next }
+        { print $1 }
+    ' || true)
 
-# Если нет авторов, завершить скрипт успешно и не выводить ничего в stdout (CSV не будет создан)
-if [ -z "$authors" ]; then
-    # ...ничего не выводим...
+if [ -z "$authors_list" ]; then
     exit 0
 fi
 
 # Вывести заголовок таблицы
 echo "Author,Email,Total Commits,Recent Commits (30 days),Files Modified,Lines Added,Lines Deleted,Net Lines"
-for username in $authors; do
-    # Получить email автора
-    author_email=$(git log --all $date_filter --author="$username" --format='%aE' | grep -v -E "$EXCLUDED_AUTHORS" | sort | uniq | head -n1)
-    # Quick stats with date filter
-    total_commits=$(eval "git log --all --author=\"$username\" $date_filter --oneline" | wc -l)
-    recent_commits=$(eval "git log --all --author=\"$username\" $date_filter --since=\"30 days ago\" --oneline" | wc -l)
-    files_modified=$(eval "git log --all --author=\"$username\" $date_filter --name-only --pretty=format:" | sort -u | wc -l)
 
-    # Lines of code (simplified) with date filter
-    total_additions=0
-    total_deletions=0
+while IFS= read -r username; do
+    [ -z "$username" ] && continue
 
-    while read additions deletions file; do
-        if [ -n "$additions" ] && [ "$additions" != "-" ]; then
-            total_additions=$((total_additions + additions))
-        fi
-        if [ -n "$deletions" ] && [ "$deletions" != "-" ]; then
-            total_deletions=$((total_deletions + deletions))
-        fi
-    done < <(eval "git log --all --author=\"$username\" $date_filter --pretty=tformat: --numstat")
+    # Точный мэтч по имени (поле 2) через awk — избегаем regex --author=
+    author_email=$(echo "$full_log" | awk -F'|' -v a="$username" '$2==a {print $3}' | sort | uniq | head -n1)
+    unique_hashes=$(echo "$full_log"  | awk -F'|' -v a="$username" '$2==a {print $1}' | sort -u)
+    recent_commits=$(echo "$recent_log" | awk -F'|' -v a="$username" '$2==a {print $1}' | sort -u | wc -l | tr -d ' ')
+
+    if [ -z "$unique_hashes" ]; then
+        total_commits=0
+    else
+        total_commits=$(echo "$unique_hashes" | wc -l | tr -d ' ')
+    fi
+
+    # Lines of code и Files Modified: один awk-проход по numstat всех уникальных коммитов
+    if [ -n "$unique_hashes" ]; then
+        stats=$(while IFS= read -r hash; do
+            git diff-tree --no-commit-id -r --numstat "$hash" 2>/dev/null
+        done <<< "$unique_hashes" | awk '
+            NF==3 && $1~/^[0-9]+$/ { add+=$1; del+=$2; files[$3]=1 }
+            END { print add+0, del+0, length(files) }
+        ')
+        total_additions=$(echo "$stats" | cut -d' ' -f1)
+        total_deletions=$(echo "$stats" | cut -d' ' -f2)
+        files_modified=$(echo "$stats"  | cut -d' ' -f3)
+    else
+        total_additions=0; total_deletions=0; files_modified=0
+    fi
 
     net_lines=$((total_additions - total_deletions))
-
-    # Выводим строку таблицы
     echo "$username,$author_email,$total_commits,$recent_commits,$files_modified,$total_additions,$total_deletions,$net_lines"
-done
-exit 0
+done <<< "$authors_list"
